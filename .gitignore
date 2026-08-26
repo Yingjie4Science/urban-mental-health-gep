@@ -1,0 +1,61 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+dist/
+build/
+
+# Jupyter Notebooks
+.ipynb_checkpoints
+
+# IDEs
+.vscode/
+.idea/
+.cursor/  # Cursor AI IDE settings
+
+# System
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# ---- Geospatial raster/vector data (large binary files) ----
+*.tif
+*.tiff
+*.img
+*.vrt  # GDAL virtual raster (intermediate, not for tracking)
+*.aux.xml  # GDAL statistics sidecar files
+*.ovr  # GDAL overview files
+*.shp
+*.shx
+*.dbf
+*.prj
+*.sbn
+*.sbx
+*.gpkg
+*.geojson  # small config geojsons can be force-added with git add -f
+
+# ---- Output CSVs (pipeline results) ----
+# Pattern: matches timestamped project output directories entirely
+urban_mental_health_*/
+# Also match any result CSVs at repo root if generated there
+##forest_area_value_by_country*.csv
+##forest_10km_masked*.tif  # (already covered by *.tif, but explicit)
+
+# Input data CSVs are NOT ignored — track nontimber_price_iucn_edited.csv
+# If you want to ignore ALL CSVs, uncomment the line below.
+# *.csv
+
+# ---- Environment/dependency files ----
+# Don't ignore environment.yml — it should be tracked
+# But ignore conda package cache
+.conda/
+pkgs/
+
+# ---- Specific legacy ignores based on observation ----
+# (These are already covered by *.tif and *.gpkg above, kept for explicitness)
+##lulc_forest_50_90.tif
+##roads_proj.gpkg
+##rivers_proj.gpkg
