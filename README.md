@@ -2,7 +2,7 @@
 
 Estimates preventable depression cases (and their avoided societal cost) attributable
 to urban nature exposure, following the InVEST-style Urban Mental Health design doc
-(v0.3.0, Yingjie Li). Compares 2019 land-use NDVI-based nature exposure against a
+(Yingjie Li). Compares 2019 land-use NDVI-based nature exposure against a
 counterfactual no-vegetation scenario, applies a dose-response relative-risk model,
 and aggregates results by urban region and country.
 
