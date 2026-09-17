@@ -1,0 +1,22 @@
+name: observarun_GlobalInVESTdev
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - numpy
+  - pandas
+  - geopandas
+  - rasterio
+  - gdal
+  - shapely
+  - rasterstats
+  - rioxarray
+  - xarray
+  - dask
+  - distributed
+  - pygeoprocessing
+  - tqdm
+  - openpyxl
+  - pip
+  - pip:
+      - hazelbean
