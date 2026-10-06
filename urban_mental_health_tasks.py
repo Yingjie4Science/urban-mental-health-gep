@@ -2,6 +2,7 @@ import os
 import numpy as np
 import rasterio
 import urban_mental_health_functions
+import effect_size_uncertainty
 
 
 def task_warp_lulc_to_population(p):
@@ -101,18 +102,31 @@ def task_calculate_preventable_cases(p):
     p.delta_ne_path = os.path.join(p.project_dir, 'delta_ne_2019_vs_no_veg.tif')
 
     p.preventable_cases_path = os.path.join(p.project_dir, 'preventable_cases_2019.tif')
+    p.preventable_cases_ci_lower_path = os.path.join(p.project_dir, 'preventable_cases_2019_effect_ci_lower.tif')
+    p.preventable_cases_ci_upper_path = os.path.join(p.project_dir, 'preventable_cases_2019_effect_ci_upper.tif')
 
-    urban_mental_health_functions.calculate_preventable_cases(
-        delta_ne_path=p.delta_ne_path,
-        pop_path=p.population_2019_path,
-        effect_size_table_path=p.effect_size_table_path,
-        prevalence=p.baseline_prevalence_rate,
-        p0=p.prevalence_nonexposed,
-        out_path=p.preventable_cases_path,
-        #compress="lzw"
-        compress="deflate"
-    )
-    print(f"Preventable cases raster saved to: {p.preventable_cases_path}")
+    effects = urban_mental_health_functions.load_depression_effect_sizes(p.effect_size_table_path)
+    interval_ors = effect_size_uncertainty.odds_ratios_for_case_interval(
+        effects['effect_size'], effects['ci_lower'], effects['ci_upper'])
+    # A lower OR implies a larger positive case-equivalent estimate, so the
+    # case interval uses the OR limits in reverse order.
+    for out_path, odds_ratio in (
+        (p.preventable_cases_path, interval_ors['point']),
+        (p.preventable_cases_ci_lower_path, interval_ors['lower']),
+        (p.preventable_cases_ci_upper_path, interval_ors['upper']),
+    ):
+        urban_mental_health_functions.calculate_preventable_cases(
+            delta_ne_path=p.delta_ne_path,
+            pop_path=p.population_2019_path,
+            effect_size_table_path=p.effect_size_table_path,
+            prevalence=p.baseline_prevalence_rate,
+            p0=p.prevalence_nonexposed,
+            out_path=out_path,
+            compress="deflate",
+            odds_ratio=odds_ratio,
+            overwrite=True,
+        )
+        print(f"Case-equivalent raster saved to: {out_path}")
 
     return p.preventable_cases_path
 
@@ -125,15 +139,22 @@ def task_aggregate_preventable_cases_by_region(p):
     #p.preventable_cases_path = p.get_path(os.path.join(p.project_dir, 'preventable_cases_2019.tif'))
     p.preventable_cases_path = os.path.join(p.project_dir, 'preventable_cases_2019.tif')
     p.preventable_cases_by_region_csv = os.path.join(p.project_dir, 'preventable_cases_by_region.csv')
+    p.preventable_cases_by_region_ci_lower_csv = os.path.join(p.project_dir, 'preventable_cases_by_region_effect_ci_lower.csv')
+    p.preventable_cases_by_region_ci_upper_csv = os.path.join(p.project_dir, 'preventable_cases_by_region_effect_ci_upper.csv')
 
-    result = urban_mental_health_functions.aggregate_preventable_cases_by_region(
-        preventable_cases_raster_path=p.preventable_cases_path,
-        urban_region_boundary_path=p.urban_boundary_path,
-        out_csv_path=p.preventable_cases_by_region_csv
-    )
+    for raster_path, csv_path in (
+        (p.preventable_cases_path, p.preventable_cases_by_region_csv),
+        (p.preventable_cases_ci_lower_path, p.preventable_cases_by_region_ci_lower_csv),
+        (p.preventable_cases_ci_upper_path, p.preventable_cases_by_region_ci_upper_csv),
+    ):
+        urban_mental_health_functions.aggregate_preventable_cases_by_region(
+            preventable_cases_raster_path=raster_path,
+            urban_region_boundary_path=p.urban_boundary_path,
+            out_csv_path=csv_path,
+        )
 
     # Return CSV path
-    return result
+    return p.preventable_cases_by_region_csv
 
 
 def task_calculate_country_costs(p):
@@ -143,12 +164,19 @@ def task_calculate_country_costs(p):
     #p.preventable_cases_by_region_csv = p.get_path(os.path.join(p.project_dir, 'preventable_cases_by_region.csv'))
     p.preventable_cases_by_region_csv = os.path.join(p.project_dir, 'preventable_cases_by_region.csv')
     p.preventable_cost_by_country_csv = os.path.join(p.project_dir, 'preventable_cost_by_country.csv')
+    p.preventable_cost_by_country_ci_lower_csv = os.path.join(p.project_dir, 'preventable_cost_by_country_effect_ci_lower.csv')
+    p.preventable_cost_by_country_ci_upper_csv = os.path.join(p.project_dir, 'preventable_cost_by_country_effect_ci_upper.csv')
 
-    result = urban_mental_health_functions.apply_country_costs(
-        regional_cases_csv_path=p.preventable_cases_by_region_csv,
-        health_cost_rate_path=p.health_cost_rate_path,
-        out_country_csv_path=p.preventable_cost_by_country_csv
-    )
+    for cases_csv, costs_csv in (
+        (p.preventable_cases_by_region_csv, p.preventable_cost_by_country_csv),
+        (p.preventable_cases_by_region_ci_lower_csv, p.preventable_cost_by_country_ci_lower_csv),
+        (p.preventable_cases_by_region_ci_upper_csv, p.preventable_cost_by_country_ci_upper_csv),
+    ):
+        urban_mental_health_functions.apply_country_costs(
+            regional_cases_csv_path=cases_csv,
+            health_cost_rate_path=p.health_cost_rate_path,
+            out_country_csv_path=costs_csv,
+        )
 
     # Return tuple of paths
-    return result
+    return p.preventable_cost_by_country_csv

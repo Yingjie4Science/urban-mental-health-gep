@@ -12,6 +12,7 @@ from osgeo import gdal
 import shapely
 from shapely.geometry import MultiPolygon
 import pygeoprocessing as pgp
+import effect_size_uncertainty
 from hazelbean.spatial_utils import warp_raster_to_match
 import rioxarray
 import xarray as xr
@@ -304,6 +305,25 @@ def calculate_delta_raster(
     #print(f"Delta raster saved to: {out_path}")
 
 
+def load_depression_effect_sizes(effect_size_table_path):
+    """Read the depression OR and its 95% CI per 0.1 NDVI increase."""
+    df = pd.read_excel(effect_size_table_path)
+    required = {'health_indicator', 'effect_size', 'ci_lower', 'ci_upper'}
+    missing = required.difference(df.columns)
+    if missing:
+        raise ValueError(f"Effect size table is missing columns: {sorted(missing)}")
+    rows = df.loc[df['health_indicator'] == 'depression']
+    if len(rows) != 1:
+        raise ValueError("Effect size table must contain exactly one depression row")
+    row = rows.iloc[0]
+    values = {key: float(row[key]) for key in ('effect_size', 'ci_lower', 'ci_upper')}
+    if not all(np.isfinite(value) and value > 0 for value in values.values()):
+        raise ValueError("Depression OR and CI limits must be finite and positive")
+    if not values['ci_lower'] <= values['effect_size'] <= values['ci_upper']:
+        raise ValueError("Depression OR must lie within its 95% CI")
+    return values
+
+
 def calculate_preventable_cases(
         delta_ne_path,
         pop_path,
@@ -312,25 +332,34 @@ def calculate_preventable_cases(
         p0,
         out_path,
         #compress="lzw"
-        compress="deflate"
+        compress="deflate",
+        odds_ratio=None,
+        overwrite=False
         ):
     """
     Calculate preventable cases per pixel using delta nature exposure and population.
     """
 
-    if os.path.exists(out_path):
+    if os.path.exists(out_path) and not overwrite:
         print(f"Raster already exists at {out_path}. Skipping preventable cases raster computation.")
         return out_path
     
-    # Read effect size table
-    df = pd.read_excel(effect_size_table_path)
+    if not 0 <= prevalence <= 1 or not 0 <= p0 < 1:
+        raise ValueError("Prevalence and p0 must be probabilities in [0, 1]")
+    if odds_ratio is None:
+        odds_ratio = load_depression_effect_sizes(effect_size_table_path)['effect_size']
+    odds_ratio = float(odds_ratio)
+    if not np.isfinite(odds_ratio) or odds_ratio <= 0:
+        raise ValueError("Odds ratio must be finite and positive")
 
-    # Get relative odds per unit NDVI.
-    odds_ratio = float(df.loc[df['health_indicator'] == 'depression', 'effect_size'].iloc[0])
-    #odds_ratio = float(df[df['health_indicator'] == 'depression']['effect_size'].iloc[0])
-
-    # Calculate risk ratio.
-    risk_ratio = odds_ratio/(1-p0 + (p0*odds_ratio))
+    # Convert the meta-analysis OR to an approximate RR before applying NDVI.
+    # p0 is prevalence in the least-green reference group, not the 0.05
+    # population-wide baseline prevalence used below to calculate bc.
+    # Default p0=0.115 comes from Hystad et al. (2019), Table 1, health-record
+    # diagnosis in the lowest NDVI quartile of a Quebec adult cohort. This is
+    # a transported proxy for the global run. Zhang & Yu (1998) conversion:
+    # RR = OR / (1 - p0 + p0 * OR).
+    risk_ratio = effect_size_uncertainty.odds_ratio_to_risk_ratio(odds_ratio, p0)
 
     with rasterio.open(delta_ne_path) as dsrc, rasterio.open(pop_path) as psrc:
         if dsrc.shape != psrc.shape:
@@ -418,8 +447,7 @@ def aggregate_preventable_cases_by_region(
 
     # Save to CSV.
     df = pd.DataFrame(results)
-    if 'total_preventable_cases' in df.columns:
-        df['total_preventable_cases'] = df['total_preventable_cases'].round(0).astype(int)
+    # Preserve fractional case-equivalent values through country aggregation.
     df.to_csv(out_csv_path, index=False)
     print(f"Regional preventable cases summary written to: {out_csv_path}")
 
@@ -438,6 +466,15 @@ def apply_country_costs(
     # Read input data.
     regional_df = pd.read_csv(regional_cases_csv_path)
     cost_df = pd.read_excel(health_cost_rate_path)
+    from cost_basis import validate_2019_usd_non_ppp
+    # The monetary basis must be explicit for every input rate. This validates
+    # workbook declarations; source and conversion records still need review.
+    validate_2019_usd_non_ppp(cost_df.to_dict('records'))
+    if 'country' not in cost_df or 'cost_per_case' not in cost_df:
+        raise ValueError("Cost table must contain country and cost_per_case columns")
+    cost_df['cost_per_case'] = pd.to_numeric(cost_df['cost_per_case'], errors='coerce')
+    if not np.isfinite(cost_df['cost_per_case']).all() or (cost_df['cost_per_case'] < 0).any():
+        raise ValueError("Cost per case must be finite and nonnegative for interval propagation")
 
     # Filter regions by countries.
     filtered = regional_df[regional_df['country'].isin(cost_df['country'])]
@@ -449,10 +486,10 @@ def apply_country_costs(
     merged = pd.merge(country_sums, cost_df, on='country')
 
     # Calculate cost savings.
-    merged['cost_savings'] = merged['total_preventable_cases'] * merged['cost_per_case']
+    merged['cost_savings_2019_usd'] = merged['total_preventable_cases'] * merged['cost_per_case']
 
     # Write output CSV with desired columns.
-    merged[['country', 'total_preventable_cases', 'cost_savings']].to_csv(out_country_csv_path, index=False, float_format='%.2f')
+    merged[['country', 'total_preventable_cases', 'cost_savings_2019_usd']].to_csv(out_country_csv_path, index=False, float_format='%.2f')
     print(f"Country-level cost savings saved to: {out_country_csv_path}")
 
     return out_country_csv_path
