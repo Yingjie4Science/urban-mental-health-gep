@@ -1,10 +1,10 @@
 # Global GEP Urban Mental Health Service
 
-This repository estimates a depression-related, prevalence-based case-equivalent index associated with 2019 urban vegetation exposure and a built-up-like, zero-positive-NDVI counterfactual. It multiplies the index by country cost-per-case inputs for a cost-weighted output. The calculation follows an InVEST-style design but uses the Python pipeline in this repository. The current case-count interpretation, adult prevalence denominator, and cost scope require review before the output is presented as people with depression avoided or as avoided societal cost.
+This repository estimates additional depression-related cases under a built-up-like, zero-positive-NDVI counterfactual relative to estimated observed 2019 cases. It uses 2019 country-specific, all-age GBD depressive-disorders prevalence with 2019 all-age WorldPop. The resulting cases and costs are conditional model estimates, not observed avoided diagnoses or validated societal savings.
 
 ## Status and evidence boundary
 
-This fork-ready update adds conditional 95% effect-size bounds and a run manifest. The public repository does not include the rasters, lookup table, effect-size workbook, urban polygons, cost workbook, or completed outputs. The numerical results and full geospatial run have therefore not been validated here. The fixed default prevalence parameters are documented assumptions rather than locally measured rates.
+The country-prevalence workflow and observed-case formula are implemented, with conditional 95% effect-size bounds and a run manifest. The public repository does not include the rasters, lookup table, effect-size workbook, urban polygons, cost workbook, or completed outputs. The numerical results, spatial joins, cost basis and full geospatial run are therefore unvalidated. The default `p0 = 0.115` remains a transported assumption.
 
 ## Workflow
 
@@ -12,14 +12,18 @@ This fork-ready update adds conditional 95% effect-size bounds and a run manifes
 2. Assign NDVI to each land-cover code from `glc_fcs30d_attribute_table_processed.csv`. This code does not calculate Landsat NDVI or a residential buffer average.
 3. Set every positive mapped NDVI value to zero for a built-up-like exposure counterfactual. Zero and negative values remain unchanged; land-cover codes do not change.
 4. Calculate `delta_NDVI = baseline_NDVI - counterfactual_NDVI`.
-5. Convert the Liu et al. (2023) depression odds ratio per +0.1 NDVI to a risk ratio using `RR = OR / (1 - p0 + p0 * OR)`; then calculate the current prevalence-based case-equivalent index per pixel.
-6. Sum pixel outputs within supplied urban polygons, then apply matched country cost-per-case rates. Countries with no matching cost row are excluded.
+5. Convert the Liu et al. (2023) depression odds ratio per +0.1 NDVI to an approximate risk ratio using `RR = OR / (1 - p0 + p0 * OR)`. Compute a pixel **case factor at prevalence 1** as `population × (RR^(-10 × delta_NDVI) - 1)`. This treats 2019 prevalence-derived cases as the observed reference state.
+6. Sum case factors within urban polygons and multiply each polygon by its matched country 2019 GBD depressive-disorders prevalence. Sum regional cases by country and apply matched 2019 USD non-PPP cost-per-case rates. Unmatched prevalence or cost countries stop the run.
 
-The runner uses `baseline_prevalence = 0.05` and `p0 = 0.115` by default. **They have different roles.** The 0.05 value approximates a [WHO adult depression prevalence](https://www.who.int/key-messages), while the configured WorldPop raster includes all ages. This denominator mismatch must be resolved for interpretable case counts. The 0.115 value is the health-record depression diagnosis proportion for the lowest residential-NDVI quartile in Table 1 of [Hystad et al. (2019)](https://pubmed.ncbi.nlm.nih.gov/33778335/), a Quebec adult cohort. Perry is the first author's given name. This is a proxy for the least-green reference population in the OR-to-RR conversion, not global prevalence. The conversion follows [Zhang and Yu (1998)](https://doi.org/10.1001/jama.280.19.1690).
+The agreed primary workflow requires `--country-prevalence-table` pointing to the validated 204-location CSV documented in the local `gep-global/depression_prevalence_review` folder. The table must have `location_id`, `country_as_gbd`, `year = 2019`, `prevalence_fraction`, and `gbd_release = GBD 2023`. Exact polygon-country/GBD-name matches are used by default. A reviewed crosswalk CSV (`polygon_country,gbd_location_id`) can resolve differences; missing matches fail. The historical 0.05 WHO adult proxy is available only via explicit `--baseline-prevalence 0.05` sensitivity run, not the primary default.
+
+The separate default `p0 = 0.115` is the health-record diagnosis proportion for the lowest residential-NDVI quartile in Table 1 of [Hystad et al. (2019)](https://pubmed.ncbi.nlm.nih.gov/33778335/), a Quebec adult cohort. It is not a GBD country prevalence or measured zero-NDVI risk. [Zhang and Yu (1998)](https://doi.org/10.1001/jama.280.19.1690) give the approximate OR-to-RR conversion. The model's cost and case interpretations still depend on outcome/effect compatibility and data validation.
+
+The full Liu NDVI study extraction found nine named studies and 13 forest estimates, mixed depression outcomes, repeated cohorts, very high heterogeneity, and no fully matched low-exposure probability for an individual forest effect. The project therefore retains `p0 = 0.115` as a labelled legacy scenario, `0.096` as a separate Hystad self-report scenario, and `0.03–0.20` as structural sensitivity analysis. See the [decision and to-do record](docs/DECISIONS_AND_TODOS.md), [evidence audit](docs/evidence/liu_2023_ndvi_p0_review.md), and [row-level extraction](docs/evidence/liu_2023_ndvi_study_extraction.csv).
 
 ## Reproduce a run
 
-Create the environment from `environment.yml` and provide the six external inputs at the paths below, relative to `--base-data-dir`:
+Create the environment from `environment.yml` and provide the six external spatial, effect and cost inputs at the paths below, relative to `--base-data-dir`:
 
 | Input | Expected path |
 | --- | --- |
@@ -39,19 +43,20 @@ Run from this directory with a fresh output directory:
 ```bash
 python run_urban_mental_health.py \
   --base-data-dir /path/to/urban_mental_health_inputs \
+  --country-prevalence-table /path/to/gbd_2023_2019_depressive_disorders_country_prevalence.csv \
   --project-dir /path/to/new_run
 ```
 
-Use `--baseline-prevalence` and `--p0` to run documented alternatives. The first parameter should match the age range and outcome definition of the population raster; the second should represent the least-green reference group for the OR. The default output directory is timestamped. Earlier land-cover and NDVI tasks still skip existing files, so a fresh directory is needed when inputs change.
+Omit `--country-crosswalk` only if every polygon country label exactly matches the GBD table. Use `--baseline-prevalence` for an explicitly labelled scalar sensitivity run **instead of** the country table; use `--p0` for a reference-risk sensitivity run. `p0` should correspond to the least-green reference group for the OR. The default output directory is timestamped. Earlier land-cover and NDVI tasks still skip existing files, so a fresh directory is needed when inputs change.
 
 After successful execution, `run_manifest.json` records parameter values and provenance notes, the Git commit when available, Python version, and SHA-256 checksums of inputs, source files, and key outputs. Hashing large rasters adds I/O time. The manifest is local output and should be reviewed for machine paths before any publication.
 
 ## Conditional 95% effect-size limits
 
-The pipeline writes the point raster plus `effect_ci_lower` and `effect_ci_upper` rasters and matching urban-region and country-cost CSVs. It propagates the two reported OR limits through the same OR-to-RR conversion and model formula. For this code's nonnegative exposure change, a lower OR produces a larger case-equivalent estimate. Therefore, the lower output limit uses the **upper OR limit**, and the upper output limit uses the **lower OR limit**. Direct endpoint transformation gives the conditional bounds for one shared monotone effect parameter; sampling that parameter by Monte Carlo would converge to the same result.
+The pipeline writes point and effect-limit **case-factor** rasters (each at prevalence 1) and matching urban-region case and country-cost CSVs. It propagates the two reported OR limits through the same OR-to-RR conversion and model formula. For this code's nonnegative exposure change, a lower OR produces a larger case-equivalent estimate. Therefore, the lower output limit uses the **upper OR limit**, and the upper output limit uses the **lower OR limit**. Direct endpoint transformation gives the conditional bounds for one shared monotone effect parameter; sampling that parameter by Monte Carlo would converge to the same result.
 
 The interval holds p0, baseline prevalence, land-cover-derived NDVI, population, and cost rates fixed. It does not cover their uncertainty, the substantial heterogeneity of the source literature, or the assumptions needed for a causal interpretation. Fractional region estimates are retained through country aggregation; values are rounded only in final country CSV presentation.
 
 ## Review gates
 
-Before reporting case or monetary values, verify the adult-versus-all-age prevalence denominator, the exact dated source for the 0.05 rate, transportability and sensitivity of the Quebec p0 proxy, land-cover-to-NDVI lookup provenance, polygon feature-ID mapping, cost scope, each rate's 2019 USD non-PPP provenance, and the reference-state meaning of the case formula. These checks require the unpublished input files and a completed run.
+Before reporting case or monetary values, verify the GBD-country/polygon join and outcome match, transportability and sensitivity of the Quebec p0 proxy, land-cover-to-NDVI lookup provenance, polygon feature-ID mapping, cost scope, each rate's 2019 USD non-PPP provenance, and the observed-case reference-state assumption. These checks require the unpublished input files and a completed run.

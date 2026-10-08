@@ -379,12 +379,12 @@ def calculate_preventable_cases(
                 if pop_nodata is not None:
                     pop = np.where(pop == pop_nodata, np.nan, pop)  # mask WorldPop's NoData sentinel before it enters arithmetic
                 
-                # Calculate preventable fraction.
-                pf = 1 - np.power(risk_ratio, 10*delta_ne)
-
-                # Calculate baseline cases and preventable cases.
-                bc = prevalence * pop  # baseline cases per pixel
-                preventable_cases = bc * pf  # preventable cases per pixel
+                # The no-vegetation/observed risk ratio is 1 / RR**delta.
+                # In the country-rate workflow prevalence=1 here; the actual
+                # country rate is applied after urban-polygon aggregation.
+                bc = prevalence * pop
+                preventable_cases = effect_size_uncertainty.additional_cases_from_observed(
+                    bc, risk_ratio, delta_ne)
 
                 # Handle NaN values.
                 preventable_cases = np.where(np.isnan(delta_ne) | np.isnan(pop), np.nan, preventable_cases)
@@ -397,7 +397,10 @@ def calculate_preventable_cases(
 def aggregate_preventable_cases_by_region(
         preventable_cases_raster_path,
         urban_region_boundary_path,
-        out_csv_path
+        out_csv_path,
+        country_prevalence_table_path=None,
+        country_crosswalk_path=None,
+        scalar_prevalence=None,
         ):
     """
     Aggregate preventable cases by urban regions using pygeoprocessing.
@@ -445,8 +448,25 @@ def aggregate_preventable_cases_by_region(
         }
         results.append(region_stats)
 
-    # Save to CSV.
+    # The input raster is a case factor at prevalence = 1. Multiplying after
+    # zonal aggregation is algebraically equivalent to a country-rate raster,
+    # provided every urban polygon belongs to exactly one country. It avoids
+    # rasterizing thousands of polygons across the global 100 m grid.
     df = pd.DataFrame(results)
+    if df.empty:
+        raise ValueError('No urban polygons had valid population/raster overlap')
+    if country_prevalence_table_path is not None:
+        from prevalence_inputs import resolve_country_rates
+        rates = resolve_country_rates(df['country'].unique(),
+                                      country_prevalence_table_path,
+                                      country_crosswalk_path)
+        df['baseline_prevalence'] = df['country'].map(rates)
+    elif scalar_prevalence is not None:
+        df['baseline_prevalence'] = scalar_prevalence
+    else:
+        raise ValueError('Provide a country prevalence table or an explicit scalar sensitivity rate')
+    df['case_factor_at_prevalence_1'] = df.pop('total_preventable_cases')
+    df['total_preventable_cases'] = df['case_factor_at_prevalence_1'] * df['baseline_prevalence']
     # Preserve fractional case-equivalent values through country aggregation.
     df.to_csv(out_csv_path, index=False)
     print(f"Regional preventable cases summary written to: {out_csv_path}")
@@ -472,12 +492,17 @@ def apply_country_costs(
     validate_2019_usd_non_ppp(cost_df.to_dict('records'))
     if 'country' not in cost_df or 'cost_per_case' not in cost_df:
         raise ValueError("Cost table must contain country and cost_per_case columns")
+    if cost_df['country'].isna().any() or cost_df['country'].duplicated().any():
+        raise ValueError('Cost table country names must be nonmissing and unique')
     cost_df['cost_per_case'] = pd.to_numeric(cost_df['cost_per_case'], errors='coerce')
     if not np.isfinite(cost_df['cost_per_case']).all() or (cost_df['cost_per_case'] < 0).any():
         raise ValueError("Cost per case must be finite and nonnegative for interval propagation")
 
-    # Filter regions by countries.
-    filtered = regional_df[regional_df['country'].isin(cost_df['country'])]
+    # A missing country price must be reviewed, never silently omitted.
+    unmatched = sorted(set(regional_df['country']) - set(cost_df['country']))
+    if unmatched:
+        raise ValueError(f"Urban-region countries missing from cost table: {unmatched}")
+    filtered = regional_df
 
     # Sum preventable cases for each country.
     country_sums = filtered[['country', 'total_preventable_cases']].groupby('country').sum()

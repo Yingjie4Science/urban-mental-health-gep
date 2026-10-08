@@ -101,9 +101,9 @@ def task_calculate_preventable_cases(p):
 
     p.delta_ne_path = os.path.join(p.project_dir, 'delta_ne_2019_vs_no_veg.tif')
 
-    p.preventable_cases_path = os.path.join(p.project_dir, 'preventable_cases_2019.tif')
-    p.preventable_cases_ci_lower_path = os.path.join(p.project_dir, 'preventable_cases_2019_effect_ci_lower.tif')
-    p.preventable_cases_ci_upper_path = os.path.join(p.project_dir, 'preventable_cases_2019_effect_ci_upper.tif')
+    p.preventable_cases_path = os.path.join(p.project_dir, 'case_factor_at_prevalence_1.tif')
+    p.preventable_cases_ci_lower_path = os.path.join(p.project_dir, 'case_factor_at_prevalence_1_effect_ci_lower.tif')
+    p.preventable_cases_ci_upper_path = os.path.join(p.project_dir, 'case_factor_at_prevalence_1_effect_ci_upper.tif')
 
     effects = urban_mental_health_functions.load_depression_effect_sizes(p.effect_size_table_path)
     interval_ors = effect_size_uncertainty.odds_ratios_for_case_interval(
@@ -119,14 +119,14 @@ def task_calculate_preventable_cases(p):
             delta_ne_path=p.delta_ne_path,
             pop_path=p.population_2019_path,
             effect_size_table_path=p.effect_size_table_path,
-            prevalence=p.baseline_prevalence_rate,
+            prevalence=1.0,
             p0=p.prevalence_nonexposed,
             out_path=out_path,
             compress="deflate",
             odds_ratio=odds_ratio,
             overwrite=True,
         )
-        print(f"Case-equivalent raster saved to: {out_path}")
+        print(f"Case factor raster (prevalence=1) saved to: {out_path}")
 
     return p.preventable_cases_path
 
@@ -137,7 +137,7 @@ def task_aggregate_preventable_cases_by_region(p):
     """
 
     #p.preventable_cases_path = p.get_path(os.path.join(p.project_dir, 'preventable_cases_2019.tif'))
-    p.preventable_cases_path = os.path.join(p.project_dir, 'preventable_cases_2019.tif')
+    p.preventable_cases_path = os.path.join(p.project_dir, 'case_factor_at_prevalence_1.tif')
     p.preventable_cases_by_region_csv = os.path.join(p.project_dir, 'preventable_cases_by_region.csv')
     p.preventable_cases_by_region_ci_lower_csv = os.path.join(p.project_dir, 'preventable_cases_by_region_effect_ci_lower.csv')
     p.preventable_cases_by_region_ci_upper_csv = os.path.join(p.project_dir, 'preventable_cases_by_region_effect_ci_upper.csv')
@@ -151,6 +151,9 @@ def task_aggregate_preventable_cases_by_region(p):
             preventable_cases_raster_path=raster_path,
             urban_region_boundary_path=p.urban_boundary_path,
             out_csv_path=csv_path,
+            country_prevalence_table_path=p.country_prevalence_table_path,
+            country_crosswalk_path=p.country_crosswalk_path,
+            scalar_prevalence=p.scalar_prevalence,
         )
 
     # Return CSV path
