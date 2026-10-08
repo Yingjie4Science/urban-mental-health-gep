@@ -14,6 +14,7 @@ SOURCE_FILES = (
     'urban_mental_health_functions.py',
     'effect_size_uncertainty.py',
     'cost_basis.py',
+    'prevalence_inputs.py',
     'run_provenance.py',
     'environment.yml',
 )
@@ -49,7 +50,7 @@ def write_manifest(project_dir, inputs, source_dir, outputs, parameters):
         'git_commit': git_head(source_dir),
         'python': platform.python_version(),
         'parameters': parameters,
-        'inputs': {name: file_record(path) for name, path in inputs.items()},
+        'inputs': {name: file_record(path) for name, path in inputs.items() if path is not None},
         'source_files': {name: file_record(source_dir / name) for name in SOURCE_FILES},
         'outputs': {name: file_record(path) for name, path in outputs.items()},
     }

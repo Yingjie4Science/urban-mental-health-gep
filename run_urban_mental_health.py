@@ -1,8 +1,7 @@
 """Run the 2019 global urban mental-health GEP scenario.
 
-The default prevalence inputs reproduce the published script's assumptions;
-they are not locally calibrated estimates. See README.md before interpreting
-the resulting case-equivalent or cost outputs.
+Use 2019 country GBD depressive-disorders prevalence matched to all-age
+WorldPop. An explicit scalar is available only for sensitivity comparisons.
 """
 
 import argparse
@@ -14,6 +13,7 @@ import hazelbean as hb
 
 import run_provenance
 import urban_mental_health_tasks
+from prevalence_inputs import load_country_prevalence
 
 
 def build_task_tree(project):
@@ -40,8 +40,12 @@ def parse_args():
                         help='Directory holding the tabular and WorldPop inputs')
     parser.add_argument('--project-dir', type=Path,
                         help='Output directory; defaults to a timestamped project under ~/Files/global_invest/projects')
+    parser.add_argument('--country-prevalence-table', type=Path,
+                        help='Validated GBD 2023 release, 2019 all-age depressive-disorders country CSV')
+    parser.add_argument('--country-crosswalk', type=Path,
+                        help='Optional CSV with polygon_country,gbd_location_id for reviewed name mismatches')
     parser.add_argument('--baseline-prevalence', type=float,
-                        help='Population prevalence used for case-equivalent counts; default 0.05 is an adult WHO proxy')
+                        help='Explicit scalar sensitivity rate; overrides the country table (e.g. historical 0.05)')
     parser.add_argument('--p0', type=float,
                         help='Least-green reference prevalence for OR-to-RR conversion; default 0.115')
     return parser.parse_args()
@@ -49,10 +53,20 @@ def parse_args():
 
 def main():
     args = parse_args()
-    baseline_prevalence = 0.05 if args.baseline_prevalence is None else args.baseline_prevalence
+    baseline_prevalence = args.baseline_prevalence
     p0 = 0.115 if args.p0 is None else args.p0
-    if not 0 <= baseline_prevalence <= 1 or not 0 <= p0 < 1:
-        raise ValueError('Prevalence must be in [0, 1] and p0 must be in [0, 1)')
+    if baseline_prevalence is not None and not 0 <= baseline_prevalence <= 1:
+        raise ValueError('Scalar sensitivity prevalence must be in [0, 1]')
+    if not 0 <= p0 < 1:
+        raise ValueError('p0 must be in [0, 1)')
+    if baseline_prevalence is None and args.country_prevalence_table is None:
+        raise ValueError('Specify --country-prevalence-table for the agreed primary run')
+    if baseline_prevalence is not None and args.country_prevalence_table is not None:
+        raise ValueError('Choose the country table or scalar sensitivity, not both')
+    if args.country_crosswalk and not args.country_prevalence_table:
+        raise ValueError('Country crosswalk requires --country-prevalence-table')
+    if args.country_prevalence_table:
+        load_country_prevalence(args.country_prevalence_table, args.country_crosswalk)
 
     p = hb.ProjectFlow()
     p.user_dir = os.path.expanduser('~')
@@ -80,11 +94,11 @@ def main():
     p.urban_boundary_path = p.get_path(os.path.join(p.base_data_dir, 'urban_boundaries_2019.gpkg'))
     p.health_cost_rate_path = p.get_path(os.path.join(p.base_data_dir, 'treatment_cost.xlsx'))
 
-    # The default 0.05 approximates WHO's ADULT depression prevalence (see
-    # README). WorldPop here includes all ages: that age-denominator mismatch
-    # must be resolved before interpreting output as a count of people living
-    # with depression. The dated source for a 2019 value remains to be archived.
-    p.baseline_prevalence_rate = baseline_prevalence
+    p.scalar_prevalence = baseline_prevalence
+    p.country_prevalence_table_path = (str(args.country_prevalence_table.expanduser().resolve())
+                                       if args.country_prevalence_table else None)
+    p.country_crosswalk_path = (str(args.country_crosswalk.expanduser().resolve())
+                                if args.country_crosswalk else None)
     # Hystad et al. (2019), Table 1: 234 (11.5%) health-record diagnoses in
     # the lowest residential-NDVI quartile of a Quebec adult cohort. This is a
     # proxy for p0, not measured global unexposed prevalence. Perry is the
@@ -95,9 +109,9 @@ def main():
     p.execute()
 
     output_names = (
-        'preventable_cases_2019.tif',
-        'preventable_cases_2019_effect_ci_lower.tif',
-        'preventable_cases_2019_effect_ci_upper.tif',
+        'case_factor_at_prevalence_1.tif',
+        'case_factor_at_prevalence_1_effect_ci_lower.tif',
+        'case_factor_at_prevalence_1_effect_ci_upper.tif',
         'preventable_cases_by_region.csv',
         'preventable_cases_by_region_effect_ci_lower.csv',
         'preventable_cases_by_region_effect_ci_upper.csv',
@@ -114,16 +128,18 @@ def main():
             'effect_size': p.effect_size_table_path,
             'urban_boundaries': p.urban_boundary_path,
             'country_costs': p.health_cost_rate_path,
+            'country_prevalence': p.country_prevalence_table_path,
+            'country_crosswalk': p.country_crosswalk_path,
         },
         source_dir=Path(__file__).resolve().parent,
         outputs={name: project_dir / name for name in output_names},
         parameters={
             'baseline_prevalence': baseline_prevalence,
             'baseline_prevalence_source': (
-                'user supplied; verify outcome, age group and year'
-                if args.baseline_prevalence is not None else
-                'WHO approximately 5% adult proxy; exact dated source pending; '
-                'unmatched to all-age WorldPop denominator'),
+                'explicit scalar sensitivity; verify outcome, age group and year'
+                if baseline_prevalence is not None else
+                'GBD 2023 release; 2019 all-age both-sex crude depressive-disorders '
+                'country rates, applied to 2019 all-age WorldPop'),
             'p0': p0,
             'p0_source': (
                 'user supplied; verify least-green reference group'
@@ -133,7 +149,8 @@ def main():
             'scenario': 'positive land-cover-derived NDVI set to zero',
             'effect_interval': '95% OR CI only; p0, prevalence, exposure, population and costs fixed',
             'cost_basis': 'cost workbook rows must declare 2019 USD and ppp_adjusted=False; source conversion must be audited',
-            'case_estimand': 'current code case-equivalent index; reference-state interpretation unresolved',
+            'case_estimand': 'additional no-vegetation cases relative to estimated observed 2019 cases; '
+                             'conditional on model assumptions',
         },
     )
     print('URBAN MENTAL HEALTH MODEL COMPLETED')
