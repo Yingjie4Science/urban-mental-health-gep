@@ -19,6 +19,8 @@ The agreed primary workflow requires `--country-prevalence-table` pointing to th
 
 The separate default `p0 = 0.115` is the health-record diagnosis proportion for the lowest residential-NDVI quartile in Table 1 of [Hystad et al. (2019)](https://pubmed.ncbi.nlm.nih.gov/33778335/), a Quebec adult cohort. It is not a GBD country prevalence or measured zero-NDVI risk. [Zhang and Yu (1998)](https://doi.org/10.1001/jama.280.19.1690) give the approximate OR-to-RR conversion. The model's cost and case interpretations still depend on outcome/effect compatibility and data validation.
 
+The full Liu NDVI study extraction found nine named studies and 13 forest estimates, mixed depression outcomes, repeated cohorts, very high heterogeneity, and no fully matched low-exposure probability for an individual forest effect. The project therefore retains `p0 = 0.115` as a labelled legacy scenario, `0.096` as a separate Hystad self-report scenario, and `0.03–0.20` as structural sensitivity analysis. See the [decision and to-do record](docs/DECISIONS_AND_TODOS.md), [evidence audit](docs/evidence/liu_2023_ndvi_p0_review.md), and [row-level extraction](docs/evidence/liu_2023_ndvi_study_extraction.csv).
+
 ## Reproduce a run
 
 Create the environment from `environment.yml` and provide the six external spatial, effect and cost inputs at the paths below, relative to `--base-data-dir`:
